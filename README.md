@@ -62,6 +62,8 @@ User not found
 ```
 
 ### Custom JSON Format
+
+You can provide a custom formatter to return formatted responses. Example:
 ```go
 import (
     "encoding/json"
