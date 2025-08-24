@@ -5,7 +5,6 @@ A Go package that allows HTTP handlers to return errors instead of manually writ
 ## Features
 
 - Plain text error responses by default
-- Built-in JSON and HTML formatters
 - Custom formatter interface
 - Context support for handlers
 - Standard library only
@@ -62,9 +61,34 @@ Errors are returned as plain text:
 User not found
 ```
 
-### JSON Format
+### Custom JSON Format
 ```go
-jsonFormatter := httperror.NewJSONFormatter(true) // true = pretty print
+import (
+    "encoding/json"
+    "net/http"
+    "github.com/perbu/httperror"
+)
+
+type JSONFormatter struct{}
+
+func (f *JSONFormatter) Format(w http.ResponseWriter, r *http.Request, err httperror.HTTPError) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(err.StatusCode())
+    
+    response := struct {
+        Error  string `json:"error"`
+        Status int    `json:"status"`
+        Code   string `json:"code"`
+    }{
+        Error:  err.Message(),
+        Status: err.StatusCode(),
+        Code:   http.StatusText(err.StatusCode()),
+    }
+    
+    json.NewEncoder(w).Encode(response)
+}
+
+jsonFormatter := &JSONFormatter{}
 mux.Handle("/api/users/", httperror.NewHandlerWithFormatter(getUser, jsonFormatter))
 ```
 
@@ -76,14 +100,6 @@ Output:
   "code": "Not Found"
 }
 ```
-
-### HTML Format
-```go
-htmlFormatter := httperror.NewHTMLFormatter()
-mux.Handle("/web/users/", httperror.NewHandlerWithFormatter(getUser, htmlFormatter))
-```
-
-Returns an HTML error page.
 
 ## Context Support
 
