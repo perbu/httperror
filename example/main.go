@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,19 +12,6 @@ import (
 	"github.com/perbu/httperror"
 )
 
-// User represents a user in our example
-type User struct {
-	ID   int    `json:"id"`
-	Name string `json:"name"`
-	Age  int    `json:"age"`
-}
-
-// Simple in-memory user store
-var users = map[int]*User{
-	1: {ID: 1, Name: "Alice", Age: 30},
-	2: {ID: 2, Name: "Bob", Age: 25},
-}
-
 func main() {
 	// Create HTTP mux
 	mux := http.NewServeMux()
@@ -32,18 +20,12 @@ func main() {
 	mux.Handle("/users", httperror.NewHandler(listUsers))
 	mux.Handle("/users/", httperror.NewHandler(getUser))
 
-	// Example 2: Using built-in JSON formatter from main package
-	jsonFormatter := httperror.NewJSONFormatter(true)
+	// Example 2: Custom JSON formatter
+	jsonFormatter := &JSONFormatter{}
 	mux.Handle("/users/create", httperror.NewHandlerWithFormatter(createUser, jsonFormatter))
 
-	// Example 3: Using built-in HTML formatter from main package
-	htmlFormatter := httperror.NewHTMLFormatter()
-
-	// For more advanced formatting (XML, content negotiation, custom templates),
-	// use the formatters subpackage directly. See formatters/formatter.go for details.
-
-	// Example 5: Context-based handlers with HTML formatter
-	mux.Handle("/timeout", httperror.NewContextHandlerWithFormatter(timeoutExample, htmlFormatter))
+	// Example 3: Context-based handlers with default formatter
+	mux.Handle("/timeout", httperror.NewContextHandler(timeoutExample))
 
 	fmt.Println("Starting server on :8080")
 	fmt.Println("Try these endpoints:")
@@ -52,16 +34,16 @@ func main() {
 	fmt.Println("  GET  /users/999      - Not found error (plain text errors)")
 	fmt.Println("  GET  /users/invalid  - Bad request error (plain text errors)")
 	fmt.Println("  POST /users/create   - Create user (JSON formatted errors)")
-	fmt.Println("  GET  /timeout        - Timeout example (HTML formatted errors)")
-	fmt.Println("  GET  /panic          - Panic recovery demo (HTML formatted errors)")
+	fmt.Println("  GET  /timeout        - Timeout example (plain text errors)")
+	fmt.Println("  GET  /panic          - Panic recovery demo (plain text errors)")
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Println("  curl http://localhost:8080/users/999          # Plain text error")
 	fmt.Println("  curl http://localhost:8080/users/create       # JSON error")
-	fmt.Println("  curl http://localhost:8080/timeout            # HTML error")
+	fmt.Println("  curl http://localhost:8080/timeout            # Plain text error")
 
-	// Add panic endpoint with HTML formatter
-	mux.Handle("/panic", httperror.NewHandlerWithFormatter(panicExample, htmlFormatter))
+	// Add panic endpoint with default formatter
+	mux.Handle("/panic", httperror.NewHandler(panicExample))
 
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
@@ -178,4 +160,37 @@ func timeoutExample(ctx context.Context, w http.ResponseWriter, r *http.Request)
 // panicExample demonstrates panic recovery
 func panicExample(w http.ResponseWriter, r *http.Request) error {
 	panic("This is a simulated panic!")
+}
+
+// User represents a user in our example
+type User struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Age  int    `json:"age"`
+}
+
+// Simple in-memory user store
+var users = map[int]*User{
+	1: {ID: 1, Name: "Alice", Age: 30},
+	2: {ID: 2, Name: "Bob", Age: 25},
+}
+
+// JSONFormatter is a custom formatter that outputs JSON error responses
+type JSONFormatter struct{}
+
+func (f *JSONFormatter) Format(w http.ResponseWriter, r *http.Request, err httperror.HTTPError) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(err.StatusCode())
+
+	response := struct {
+		Error  string `json:"error"`
+		Status int    `json:"status"`
+		Code   string `json:"code"`
+	}{
+		Error:  err.Message(),
+		Status: err.StatusCode(),
+		Code:   http.StatusText(err.StatusCode()),
+	}
+
+	json.NewEncoder(w).Encode(response)
 }
