@@ -117,5 +117,5 @@ func AsHTTPError(err error) HTTPError {
 	if httpErr, ok := err.(HTTPError); ok {
 		return httpErr
 	}
-	return InternalServerError(err.Error())
+	return InternalServerError("An unexpected error occurred") // security
 }
