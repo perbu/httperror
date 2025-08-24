@@ -8,6 +8,7 @@ A Go package that allows HTTP handlers to return errors instead of manually writ
 - Custom formatter interface
 - Context support for handlers
 - Standard library only
+- Supports error formatters in [github.com/perbu/httperrorfmt](https://github.com/perbu/httperrorfmt)
 
 ## Quick Start
 
