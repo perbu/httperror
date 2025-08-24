@@ -1,0 +1,407 @@
+package httperror
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestHTTPErrorInterface(t *testing.T) {
+	err := BadRequest("test message")
+
+	if err.StatusCode() != 400 {
+		t.Errorf("Expected status code 400, got %d", err.StatusCode())
+	}
+
+	if err.Message() != "test message" {
+		t.Errorf("Expected message 'test message', got '%s'", err.Message())
+	}
+
+	if err.Error() != "test message" {
+		t.Errorf("Expected error string 'test message', got '%s'", err.Error())
+	}
+}
+
+func TestErrorTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      HTTPError
+		expected int
+	}{
+		{"BadRequest", BadRequest("test"), 400},
+		{"Unauthorized", Unauthorized("test"), 401},
+		{"Forbidden", Forbidden("test"), 403},
+		{"NotFound", NotFound("test"), 404},
+		{"MethodNotAllowed", MethodNotAllowed("test"), 405},
+		{"Conflict", Conflict("test"), 409},
+		{"UnprocessableEntity", UnprocessableEntity("test"), 422},
+		{"InternalServerError", InternalServerError("test"), 500},
+		{"NotImplemented", NotImplemented("test"), 501},
+		{"BadGateway", BadGateway("test"), 502},
+		{"ServiceUnavailable", ServiceUnavailable("test"), 503},
+		{"GatewayTimeout", GatewayTimeout("test"), 504},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.err.StatusCode() != tt.expected {
+				t.Errorf("Expected status code %d, got %d", tt.expected, tt.err.StatusCode())
+			}
+		})
+	}
+}
+
+func TestHandler(t *testing.T) {
+	// Test successful handler
+	successHandler := func(w http.ResponseWriter, r *http.Request) error {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("success"))
+		return nil
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+
+	handler := NewHandler(successHandler)
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	if w.Body.String() != "success" {
+		t.Errorf("Expected 'success', got '%s'", w.Body.String())
+	}
+}
+
+func TestHandlerError(t *testing.T) {
+	// Test error handler
+	errorHandler := func(w http.ResponseWriter, r *http.Request) error {
+		return NotFound("resource not found")
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+
+	handler := NewHandler(errorHandler)
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "resource not found") {
+		t.Errorf("Expected error message in response, got '%s'", body)
+	}
+}
+
+func TestContextHandler(t *testing.T) {
+	// Test context handler
+	contextHandler := func(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
+		if ctx.Err() != nil {
+			return New(http.StatusRequestTimeout, "timeout")
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("success"))
+		return nil
+	}
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+
+	handler := NewContextHandler(contextHandler)
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+}
+
+func TestJSONFormatter(t *testing.T) {
+	formatter := &JSONFormatter{PrettyPrint: false}
+	err := BadRequest("test error")
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+
+	formatter.Format(w, req, err)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("Expected Content-Type application/json, got '%s'", contentType)
+	}
+
+	var response ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("Failed to unmarshal JSON response: %v", err)
+	}
+
+	if response.Error != "test error" {
+		t.Errorf("Expected error message 'test error', got '%s'", response.Error)
+	}
+
+	if response.Status != 400 {
+		t.Errorf("Expected status 400, got %d", response.Status)
+	}
+}
+
+func TestContentNegotiation(t *testing.T) {
+	formatter := NewContentNegotiatingFormatter()
+	err := NotFound("page not found")
+
+	tests := []struct {
+		name       string
+		accept     string
+		expectedCT string
+	}{
+		{"JSON", "application/json", "application/json"},
+		{"HTML", "text/html", "text/html; charset=utf-8"},
+		{"Text", "text/plain", "text/plain"},
+		{"Default", "", "text/plain"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			if tt.accept != "" {
+				req.Header.Set("Accept", tt.accept)
+			}
+			w := httptest.NewRecorder()
+
+			formatter.Format(w, req, err)
+
+			if w.Code != http.StatusNotFound {
+				t.Errorf("Expected status 404, got %d", w.Code)
+			}
+
+			contentType := w.Header().Get("Content-Type")
+			if contentType != tt.expectedCT {
+				t.Errorf("Expected Content-Type '%s', got '%s'", tt.expectedCT, contentType)
+			}
+		})
+	}
+}
+
+func TestWithHeaders(t *testing.T) {
+	err := BadRequest("test error")
+	headers := map[string]string{
+		"X-Custom-Header": "custom-value",
+		"Cache-Control":   "no-cache",
+	}
+
+	errWithHeaders := WithHeaders(err, headers)
+
+	if errWithHeaders.StatusCode() != 400 {
+		t.Errorf("Expected status code 400, got %d", errWithHeaders.StatusCode())
+	}
+
+	if errWithHeaders.Message() != "test error" {
+		t.Errorf("Expected message 'test error', got '%s'", errWithHeaders.Message())
+	}
+
+	resultHeaders := errWithHeaders.Headers()
+	if resultHeaders["X-Custom-Header"] != "custom-value" {
+		t.Errorf("Expected custom header value, got '%s'", resultHeaders["X-Custom-Header"])
+	}
+
+	if resultHeaders["Cache-Control"] != "no-cache" {
+		t.Errorf("Expected cache control header value, got '%s'", resultHeaders["Cache-Control"])
+	}
+}
+
+func TestAsHTTPError(t *testing.T) {
+	// Test with regular error
+	regularErr := errors.New("test error")
+	httpErr := AsHTTPError(regularErr)
+
+	if httpErr.StatusCode() != 500 {
+		t.Errorf("Expected status code 500 for regular error, got %d", httpErr.StatusCode())
+	}
+
+	// Test with existing HTTPError
+	existingErr := NotFound("not found")
+	httpErr2 := AsHTTPError(existingErr)
+
+	if httpErr2.StatusCode() != 404 {
+		t.Errorf("Expected status code 404 for existing HTTPError, got %d", httpErr2.StatusCode())
+	}
+
+	if httpErr2.Message() != "not found" {
+		t.Errorf("Expected message 'not found', got '%s'", httpErr2.Message())
+	}
+}
+
+func TestWrapError(t *testing.T) {
+	originalErr := errors.New("original error")
+	wrappedErr := Wrap(400, "Bad request", originalErr)
+
+	if wrappedErr.StatusCode() != 400 {
+		t.Errorf("Expected status code 400, got %d", wrappedErr.StatusCode())
+	}
+
+	if wrappedErr.Message() != "Bad request" {
+		t.Errorf("Expected message 'Bad request', got '%s'", wrappedErr.Message())
+	}
+
+	// Test unwrapping
+	if basic, ok := wrappedErr.(*basicError); ok {
+		if basic.Unwrap() == nil {
+			t.Error("Expected wrapped error to be unwrappable")
+		}
+	} else {
+		t.Error("Expected basicError type")
+	}
+}
+
+func TestContentNegotiator(t *testing.T) {
+	// Create negotiator with custom formatters
+	negotiator := NewContentNegotiator().
+		Register("application/json", &JSONFormatter{PrettyPrint: false}).
+		Register("application/xml", &XMLFormatter{}).
+		SetDefault(&TextFormatter{})
+
+	// Test JSON formatting
+	t.Run("JSON", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		err := NotFound("test not found")
+		negotiator.Format(w, req, err)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("Expected status 404, got %d", w.Code)
+		}
+
+		contentType := w.Header().Get("Content-Type")
+		if contentType != "application/json" {
+			t.Errorf("Expected Content-Type application/json, got '%s'", contentType)
+		}
+
+		// Verify it's valid JSON
+		var response ErrorResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("Failed to unmarshal JSON: %v", err)
+		}
+
+		if response.Error != "test not found" {
+			t.Errorf("Expected error message 'test not found', got '%s'", response.Error)
+		}
+	})
+
+	// Test XML formatting
+	t.Run("XML", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Accept", "application/xml")
+		w := httptest.NewRecorder()
+
+		err := BadRequest("test error")
+		negotiator.Format(w, req, err)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("Expected status 400, got %d", w.Code)
+		}
+
+		contentType := w.Header().Get("Content-Type")
+		if contentType != "application/xml" {
+			t.Errorf("Expected Content-Type application/xml, got '%s'", contentType)
+		}
+
+		body := w.Body.String()
+		if !strings.Contains(body, "<error>") || !strings.Contains(body, "test error") {
+			t.Errorf("Expected XML response with error message, got '%s'", body)
+		}
+	})
+
+	// Test fallback to default formatter
+	t.Run("Default", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Accept", "application/unknown")
+		w := httptest.NewRecorder()
+
+		err := InternalServerError("server error")
+		negotiator.Format(w, req, err)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("Expected status 500, got %d", w.Code)
+		}
+
+		contentType := w.Header().Get("Content-Type")
+		if contentType != "text/plain" {
+			t.Errorf("Expected Content-Type text/plain, got '%s'", contentType)
+		}
+
+		if w.Body.String() != "server error" {
+			t.Errorf("Expected 'server error', got '%s'", w.Body.String())
+		}
+	})
+
+	// Test override of existing formatter
+	t.Run("Override", func(t *testing.T) {
+		customJSONFormatter := &JSONFormatter{PrettyPrint: true}
+
+		negotiator.Register("application/json", customJSONFormatter)
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		err := Conflict("conflict error")
+		negotiator.Format(w, req, err)
+
+		// Should still work, just with pretty printed JSON now
+		var response ErrorResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatalf("Failed to unmarshal JSON: %v", err)
+		}
+
+		if response.Error != "conflict error" {
+			t.Errorf("Expected error message 'conflict error', got '%s'", response.Error)
+		}
+	})
+}
+
+func TestXMLFormatter(t *testing.T) {
+	formatter := &XMLFormatter{}
+	err := NotFound("resource not found")
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+
+	formatter.Format(w, req, err)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/xml" {
+		t.Errorf("Expected Content-Type application/xml, got '%s'", contentType)
+	}
+
+	body := w.Body.String()
+	expectedStrings := []string{
+		"<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+		"<error>",
+		"<message>resource not found</message>",
+		"<status>404</status>",
+		"<code>Not Found</code>",
+		"</error>",
+	}
+
+	for _, expected := range expectedStrings {
+		if !strings.Contains(body, expected) {
+			t.Errorf("Expected XML to contain '%s', got '%s'", expected, body)
+		}
+	}
+}
