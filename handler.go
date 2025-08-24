@@ -4,6 +4,16 @@ import (
 	"net/http"
 )
 
+// PlainTextFormatter is a simple formatter that returns plain text error messages
+type PlainTextFormatter struct{}
+
+// Format implements Formatter interface for plain text responses
+func (f *PlainTextFormatter) Format(w http.ResponseWriter, r *http.Request, err HTTPError) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(err.StatusCode())
+	w.Write([]byte(err.Message()))
+}
+
 // Handler wraps a HandlerFunc to implement http.Handler
 type Handler struct {
 	handler   HandlerFunc
@@ -14,7 +24,7 @@ type Handler struct {
 func NewHandler(h HandlerFunc) *Handler {
 	return &Handler{
 		handler:   h,
-		formatter: &DefaultFormatter{},
+		formatter: &PlainTextFormatter{},
 	}
 }
 
@@ -63,7 +73,7 @@ type ContextHandler struct {
 func NewContextHandler(h ContextHandlerFunc) *ContextHandler {
 	return &ContextHandler{
 		handler:   h,
-		formatter: &DefaultFormatter{},
+		formatter: &PlainTextFormatter{},
 	}
 }
 

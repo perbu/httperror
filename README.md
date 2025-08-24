@@ -2,7 +2,15 @@
 
 A Go package that allows HTTP handlers to return errors instead of manually writing status codes and responses.
 
-## Usage
+## Features
+
+- Plain text error responses by default
+- Built-in JSON and HTML formatters
+- Custom formatter interface
+- Context support for handlers
+- Standard library only
+
+## Quick Start
 
 ```go
 package main
@@ -48,12 +56,34 @@ httperror.ServiceUnavailable("Service unavailable")
 
 ## Response Formats
 
-The package formats errors based on the `Accept` header:
+### Default Format
+Errors are returned as plain text:
+```
+User not found
+```
 
-- `application/json`: `{"error":"Not found","status":404,"code":"Not Found"}`
-- `application/xml`: XML error response with message, status, and code
-- `text/html`: Basic HTML error page
-- `text/plain`: Plain text error message
+### JSON Format
+```go
+jsonFormatter := httperror.NewJSONFormatter(true) // true = pretty print
+mux.Handle("/api/users/", httperror.NewHandlerWithFormatter(getUser, jsonFormatter))
+```
+
+Output:
+```json
+{
+  "error": "User not found",
+  "status": 404,
+  "code": "Not Found"
+}
+```
+
+### HTML Format
+```go
+htmlFormatter := httperror.NewHTMLFormatter()
+mux.Handle("/web/users/", httperror.NewHandlerWithFormatter(getUser, htmlFormatter))
+```
+
+Returns an HTML error page.
 
 ## Context Support
 
@@ -68,25 +98,48 @@ mux.Handle("/path", httperror.NewContextHandler(handler))
 
 ## Custom Formatters
 
-### Built-in Content Negotiation
+Implement the `Formatter` interface:
+
 ```go
-formatter := httperror.NewContentNegotiatingFormatter()
-mux.Handle("/api", httperror.NewHandlerWithFormatter(handler, formatter))
+type Formatter interface {
+    Format(w http.ResponseWriter, r *http.Request, err HTTPError)
+}
+
+type MyCustomFormatter struct{}
+
+func (f *MyCustomFormatter) Format(w http.ResponseWriter, r *http.Request, err HTTPError) {
+    w.Header().Set("Content-Type", "application/custom")
+    w.WriteHeader(err.StatusCode())
+    // Custom formatting logic
+}
+
+customFormatter := &MyCustomFormatter{}
+mux.Handle("/custom", httperror.NewHandlerWithFormatter(handler, customFormatter))
 ```
 
-### Pluggable Formatter Registration
-```go
-negotiator := httperror.NewContentNegotiator().
-    Register("application/json", &httperror.JSONFormatter{PrettyPrint: true}).
-    Register("text/html", httperror.NewHTMLFormatter()).
-    Register("application/xml", &httperror.XMLFormatter{}).
-    SetDefault(&httperror.TextFormatter{})
+## Error Wrapping
 
-mux.Handle("/api", httperror.NewHandlerWithFormatter(handler, negotiator))
+```go
+func handler(w http.ResponseWriter, r *http.Request) error {
+    err := someOperation()
+    if err != nil {
+        return httperror.Wrap(500, "Operation failed", err)
+    }
+    return nil
+}
 ```
 
-### Available Formatters
-- `JSONFormatter` - JSON responses
-- `HTMLFormatter` - HTML error pages  
-- `TextFormatter` - Plain text responses
-- `XMLFormatter` - XML responses
+## Adding Headers
+
+```go
+err := httperror.NotFound("Resource not found")
+errWithHeaders := httperror.WithHeaders(err, map[string]string{
+    "Cache-Control": "no-cache",
+    "X-Custom-Header": "custom-value",
+})
+return errWithHeaders
+```
+
+## License
+
+BSD 2-Clause

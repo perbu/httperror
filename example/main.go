@@ -28,41 +28,40 @@ func main() {
 	// Create HTTP mux
 	mux := http.NewServeMux()
 
-	// Example 1: Default formatter (simple content negotiation)
+	// Example 1: Default formatter (simple plain text)
 	mux.Handle("/users", httperror.NewHandler(listUsers))
 	mux.Handle("/users/", httperror.NewHandler(getUser))
 
-	// Example 2: Using built-in content negotiating formatter
-	formatter := httperror.NewContentNegotiatingFormatter()
-	mux.Handle("/users/create", httperror.NewHandlerWithFormatter(createUser, formatter))
+	// Example 2: Using built-in JSON formatter from main package
+	jsonFormatter := httperror.NewJSONFormatter(true)
+	mux.Handle("/users/create", httperror.NewHandlerWithFormatter(createUser, jsonFormatter))
 
-	// Example 3: Custom pluggable formatter with XML support
-	customFormatter := httperror.NewContentNegotiator().
-		Register("application/json", &httperror.JSONFormatter{PrettyPrint: true}).
-		Register("text/html", httperror.NewHTMLFormatter()).
-		Register("application/xml", &httperror.XMLFormatter{}).
-		SetDefault(&httperror.TextFormatter{})
+	// Example 3: Using built-in HTML formatter from main package
+	htmlFormatter := httperror.NewHTMLFormatter()
 
-	// Example 4: Context-based handlers with custom formatter
-	mux.Handle("/timeout", httperror.NewContextHandlerWithFormatter(timeoutExample, customFormatter))
+	// For more advanced formatting (XML, content negotiation, custom templates),
+	// use the formatters subpackage directly. See formatters/formatter.go for details.
+
+	// Example 5: Context-based handlers with HTML formatter
+	mux.Handle("/timeout", httperror.NewContextHandlerWithFormatter(timeoutExample, htmlFormatter))
 
 	fmt.Println("Starting server on :8080")
 	fmt.Println("Try these endpoints:")
-	fmt.Println("  GET  /users          - List all users (default formatter)")
-	fmt.Println("  GET  /users/1        - Get specific user (default formatter)")
-	fmt.Println("  GET  /users/999      - Not found error (default formatter)")
-	fmt.Println("  GET  /users/invalid  - Bad request error (default formatter)")
-	fmt.Println("  POST /users/create   - Create user (content negotiation)")
-	fmt.Println("  GET  /timeout        - Timeout example (with XML support)")
-	fmt.Println("  GET  /panic          - Panic recovery demo (with XML support)")
+	fmt.Println("  GET  /users          - List all users (plain text errors)")
+	fmt.Println("  GET  /users/1        - Get specific user (plain text errors)")
+	fmt.Println("  GET  /users/999      - Not found error (plain text errors)")
+	fmt.Println("  GET  /users/invalid  - Bad request error (plain text errors)")
+	fmt.Println("  POST /users/create   - Create user (JSON formatted errors)")
+	fmt.Println("  GET  /timeout        - Timeout example (HTML formatted errors)")
+	fmt.Println("  GET  /panic          - Panic recovery demo (HTML formatted errors)")
 	fmt.Println("")
-	fmt.Println("Try different Accept headers:")
-	fmt.Println("  curl -H 'Accept: application/json' http://localhost:8080/timeout")
-	fmt.Println("  curl -H 'Accept: application/xml' http://localhost:8080/timeout")
-	fmt.Println("  curl -H 'Accept: text/html' http://localhost:8080/timeout")
+	fmt.Println("Examples:")
+	fmt.Println("  curl http://localhost:8080/users/999          # Plain text error")
+	fmt.Println("  curl http://localhost:8080/users/create       # JSON error")
+	fmt.Println("  curl http://localhost:8080/timeout            # HTML error")
 
-	// Add panic endpoint with custom formatter
-	mux.Handle("/panic", httperror.NewHandlerWithFormatter(panicExample, customFormatter))
+	// Add panic endpoint with HTML formatter
+	mux.Handle("/panic", httperror.NewHandlerWithFormatter(panicExample, htmlFormatter))
 
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

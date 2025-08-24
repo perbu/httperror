@@ -2,6 +2,7 @@ package httperror
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 )
@@ -118,4 +119,72 @@ func AsHTTPError(err error) HTTPError {
 		return httpErr
 	}
 	return InternalServerError("An unexpected error occurred") // security
+}
+
+// FormatterFunc allows using a function as a Formatter
+type FormatterFunc func(w http.ResponseWriter, r *http.Request, err HTTPError)
+
+// Format implements the Formatter interface
+func (ff FormatterFunc) Format(w http.ResponseWriter, r *http.Request, err HTTPError) {
+	ff(w, r, err)
+}
+
+// NewJSONFormatter creates a JSON formatter that can be used with handlers
+// This bridges to the formatters subpackage
+func NewJSONFormatter(prettyPrint bool) Formatter {
+	return FormatterFunc(func(w http.ResponseWriter, r *http.Request, err HTTPError) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(err.StatusCode())
+
+		response := struct {
+			Error  string `json:"error"`
+			Status int    `json:"status"`
+			Code   string `json:"code,omitempty"`
+		}{
+			Error:  err.Message(),
+			Status: err.StatusCode(),
+			Code:   http.StatusText(err.StatusCode()),
+		}
+
+		var data []byte
+		if prettyPrint {
+			data, _ = json.MarshalIndent(response, "", "  ")
+		} else {
+			data, _ = json.Marshal(response)
+		}
+
+		w.Write(data)
+	})
+}
+
+// NewHTMLFormatter creates an HTML formatter that can be used with handlers
+// This bridges to the formatters subpackage
+func NewHTMLFormatter() Formatter {
+	return FormatterFunc(func(w http.ResponseWriter, r *http.Request, err HTTPError) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(err.StatusCode())
+
+		// Simple HTML template
+		html := `<!DOCTYPE html>
+<html>
+<head>
+    <title>Error %d</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .error-container { max-width: 600px; margin: 0 auto; }
+        .error-code { font-size: 48px; color: #e74c3c; margin-bottom: 20px; }
+        .error-message { font-size: 18px; color: #333; margin-bottom: 20px; }
+        .error-details { font-size: 14px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <div class="error-code">%d</div>
+        <div class="error-message">%s</div>
+        <div class="error-details">%s</div>
+    </div>
+</body>
+</html>`
+		fmt.Fprintf(w, html, err.StatusCode(), err.StatusCode(), err.Message(), http.StatusText(err.StatusCode()))
+	})
 }
