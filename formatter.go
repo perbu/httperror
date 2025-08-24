@@ -2,6 +2,7 @@ package httperror
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -203,19 +204,31 @@ func NewContentNegotiatingFormatter() *ContentNegotiatingFormatter {
 // XMLFormatter formats errors as XML
 type XMLFormatter struct{}
 
+// XMLErrorResponse represents the XML structure for error responses
+type XMLErrorResponse struct {
+	XMLName xml.Name `xml:"error"`
+	Message string   `xml:"message"`
+	Status  int      `xml:"status"`
+	Code    string   `xml:"code"`
+}
+
 // Format implements Formatter interface for XML responses
 func (f *XMLFormatter) Format(w http.ResponseWriter, r *http.Request, err HTTPError) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(err.StatusCode())
 
-	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<error>
-    <message>%s</message>
-    <status>%d</status>
-    <code>%s</code>
-</error>`, err.Message(), err.StatusCode(), http.StatusText(err.StatusCode()))
+	response := XMLErrorResponse{
+		Message: err.Message(),
+		Status:  err.StatusCode(),
+		Code:    http.StatusText(err.StatusCode()),
+	}
 
-	w.Write([]byte(xml))
+	// Write XML declaration manually since encoding/xml doesn't include it
+	w.Write([]byte(xml.Header))
+
+	encoder := xml.NewEncoder(w)
+	encoder.Indent("", "    ")
+	encoder.Encode(response)
 }
 
 // DefaultFormatter is a simple formatter that negotiates content type
